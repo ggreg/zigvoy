@@ -61,86 +61,40 @@ pub const Config = struct {
     };
 
     pub fn loadFromFile(allocator: std.mem.Allocator, path: []const u8) !Config {
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
-
-        const content = try file.readToEndAlloc(allocator, 1024 * 1024);
-        return try parse(allocator, content);
+        // TODO: Exercise 03 - Load config from a JSON file
+        // Steps:
+        //   1. Open the file at `path` using std.fs.cwd().openFile
+        //   2. defer file.close()
+        //   3. Read entire file content with file.readToEndAlloc (max 1MB)
+        //   4. Pass content to parse()
+        _ = allocator;
+        _ = path;
+        return error.FileNotFound;
     }
 
     pub fn parse(allocator: std.mem.Allocator, json_str: []const u8) !Config {
-        const parsed = try std.json.parseFromSlice(JsonConfig, allocator, json_str, .{
-            .ignore_unknown_fields = true,
-        });
-        defer parsed.deinit();
-
-        const jc = parsed.value;
-
-        var routes: std.ArrayList(Route) = .empty;
-        defer routes.deinit(allocator);
-        for (jc.routes) |jr| {
-            try routes.append(allocator, .{
-                .prefix = jr.prefix,
-                .upstream = jr.upstream,
-            });
-        }
-
-        var upstreams: std.ArrayList(Upstream) = .empty;
-        defer upstreams.deinit(allocator);
-        for (jc.upstreams) |ju| {
-            var endpoints: std.ArrayList(Endpoint) = .empty;
-            defer endpoints.deinit(allocator);
-            for (ju.endpoints) |je| {
-                try endpoints.append(allocator, .{
-                    .host = je.host,
-                    .port = je.port,
-                });
-            }
-            try upstreams.append(allocator, .{
-                .name = ju.name,
-                .endpoints = try endpoints.toOwnedSlice(allocator),
-                .lb_policy = if (std.mem.eql(u8, ju.lb_policy, "random")) .random else .round_robin,
-            });
-        }
-
-        return .{
-            .allocator = allocator,
-            .listen_port = jc.listen_port,
-            .admin_port = jc.admin_port,
-            .routes = try routes.toOwnedSlice(allocator),
-            .upstreams = try upstreams.toOwnedSlice(allocator),
-            .health_check = .{
-                .interval_ms = jc.health_check.interval_ms,
-                .timeout_ms = jc.health_check.timeout_ms,
-                .unhealthy_threshold = jc.health_check.unhealthy_threshold,
-                .healthy_threshold = jc.health_check.healthy_threshold,
-                .path = jc.health_check.path,
-            },
-            .rate_limit = .{
-                .enabled = jc.rate_limit.enabled,
-                .requests_per_second = jc.rate_limit.requests_per_second,
-                .burst_size = jc.rate_limit.burst_size,
-            },
-            .circuit_breaker = .{
-                .enabled = jc.circuit_breaker.enabled,
-                .failure_threshold = jc.circuit_breaker.failure_threshold,
-                .reset_timeout_ms = jc.circuit_breaker.reset_timeout_ms,
-                .half_open_max_requests = jc.circuit_breaker.half_open_max_requests,
-            },
-            .retry = .{
-                .max_retries = jc.retry.max_retries,
-            },
-            ._raw_json = json_str,
-        };
+        // TODO: Exercise 03 - Parse a JSON string into a Config struct
+        // Steps:
+        //   1. Use std.json.parseFromSlice(JsonConfig, ...) with .ignore_unknown_fields = true
+        //   2. defer parsed.deinit()
+        //   3. Build routes: ArrayList(Route) → iterate jc.routes → append → toOwnedSlice
+        //   4. Build upstreams: for each JsonUpstream, build an Endpoint ArrayList,
+        //      convert lb_policy string to LbPolicy enum, then toOwnedSlice
+        //   5. Map all config fields into the returned Config struct
+        //   6. Store json_str as _raw_json (ownership transfers to Config)
+        _ = allocator;
+        _ = json_str;
+        return error.InvalidConfig;
     }
 
     pub fn deinit(self: Config) void {
-        for (self.upstreams) |u| {
-            self.allocator.free(u.endpoints);
-        }
-        self.allocator.free(self.upstreams);
-        self.allocator.free(self.routes);
-        self.allocator.free(self._raw_json);
+        // TODO: Exercise 03 - Free all owned memory
+        // Must free:
+        //   1. Each upstream's endpoints slice
+        //   2. The upstreams slice itself
+        //   3. The routes slice
+        //   4. The _raw_json string
+        _ = self;
     }
 };
 
@@ -196,7 +150,11 @@ const JsonRetry = struct {
     max_retries: u32 = 3,
 };
 
-test "parse minimal config" {
+// ============================================================================
+// Exercise 03 Tests — JSON Configuration
+// ============================================================================
+
+test "03-01: parse minimal config" {
     const json =
         \\{
         \\  "listen_port": 8080,
@@ -215,5 +173,150 @@ test "parse minimal config" {
     try std.testing.expectEqual(@as(u16, 8080), config.listen_port);
     try std.testing.expectEqual(@as(usize, 1), config.routes.len);
     try std.testing.expectEqual(@as(usize, 1), config.upstreams.len);
-    try std.testing.expectEqualStrings("backend", config.upstreams[0].name);
+}
+
+test "03-02: parse uses default values" {
+    const json =
+        \\{
+        \\  "routes": [],
+        \\  "upstreams": []
+        \\}
+    ;
+    const allocator = std.testing.allocator;
+    const owned = try allocator.dupe(u8, json);
+    const config = try Config.parse(allocator, owned);
+    defer config.deinit();
+
+    try std.testing.expectEqual(@as(u16, 8080), config.listen_port);
+    try std.testing.expectEqual(@as(u16, 9901), config.admin_port);
+    try std.testing.expectEqual(@as(u64, 5000), config.health_check.interval_ms);
+    try std.testing.expect(!config.rate_limit.enabled);
+    try std.testing.expect(!config.circuit_breaker.enabled);
+}
+
+test "03-03: parse multiple routes" {
+    const json =
+        \\{
+        \\  "routes": [
+        \\    {"prefix": "/api/", "upstream": "backend"},
+        \\    {"prefix": "/", "upstream": "frontend"}
+        \\  ],
+        \\  "upstreams": [
+        \\    {"name": "backend", "endpoints": [{"host": "127.0.0.1", "port": 3000}]},
+        \\    {"name": "frontend", "endpoints": [{"host": "127.0.0.1", "port": 5173}]}
+        \\  ]
+        \\}
+    ;
+    const allocator = std.testing.allocator;
+    const owned = try allocator.dupe(u8, json);
+    const config = try Config.parse(allocator, owned);
+    defer config.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), config.routes.len);
+    try std.testing.expectEqualStrings("/api/", config.routes[0].prefix);
+    try std.testing.expectEqualStrings("/", config.routes[1].prefix);
+}
+
+test "03-04: parse upstream with multiple endpoints" {
+    const json =
+        \\{
+        \\  "routes": [{"prefix": "/", "upstream": "api"}],
+        \\  "upstreams": [{
+        \\    "name": "api",
+        \\    "endpoints": [
+        \\      {"host": "127.0.0.1", "port": 3000},
+        \\      {"host": "127.0.0.1", "port": 3001},
+        \\      {"host": "127.0.0.1", "port": 3002}
+        \\    ]
+        \\  }]
+        \\}
+    ;
+    const allocator = std.testing.allocator;
+    const owned = try allocator.dupe(u8, json);
+    const config = try Config.parse(allocator, owned);
+    defer config.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), config.upstreams[0].endpoints.len);
+    try std.testing.expectEqual(@as(u16, 3001), config.upstreams[0].endpoints[1].port);
+}
+
+test "03-05: parse lb_policy random" {
+    const json =
+        \\{
+        \\  "routes": [],
+        \\  "upstreams": [{
+        \\    "name": "api",
+        \\    "lb_policy": "random",
+        \\    "endpoints": [{"host": "127.0.0.1", "port": 3000}]
+        \\  }]
+        \\}
+    ;
+    const allocator = std.testing.allocator;
+    const owned = try allocator.dupe(u8, json);
+    const config = try Config.parse(allocator, owned);
+    defer config.deinit();
+
+    try std.testing.expectEqual(Config.LbPolicy.random, config.upstreams[0].lb_policy);
+}
+
+test "03-06: parse rate limit config" {
+    const json =
+        \\{
+        \\  "routes": [],
+        \\  "upstreams": [],
+        \\  "rate_limit": {
+        \\    "enabled": true,
+        \\    "requests_per_second": 50,
+        \\    "burst_size": 25
+        \\  }
+        \\}
+    ;
+    const allocator = std.testing.allocator;
+    const owned = try allocator.dupe(u8, json);
+    const config = try Config.parse(allocator, owned);
+    defer config.deinit();
+
+    try std.testing.expect(config.rate_limit.enabled);
+    try std.testing.expectEqual(@as(u32, 50), config.rate_limit.requests_per_second);
+    try std.testing.expectEqual(@as(u32, 25), config.rate_limit.burst_size);
+}
+
+test "03-07: parse circuit breaker config" {
+    const json =
+        \\{
+        \\  "routes": [],
+        \\  "upstreams": [],
+        \\  "circuit_breaker": {
+        \\    "enabled": true,
+        \\    "failure_threshold": 10,
+        \\    "reset_timeout_ms": 60000,
+        \\    "half_open_max_requests": 5
+        \\  }
+        \\}
+    ;
+    const allocator = std.testing.allocator;
+    const owned = try allocator.dupe(u8, json);
+    const config = try Config.parse(allocator, owned);
+    defer config.deinit();
+
+    try std.testing.expect(config.circuit_breaker.enabled);
+    try std.testing.expectEqual(@as(u32, 10), config.circuit_breaker.failure_threshold);
+    try std.testing.expectEqual(@as(u64, 60000), config.circuit_breaker.reset_timeout_ms);
+}
+
+test "03-08: deinit frees all memory (no leaks)" {
+    const json =
+        \\{
+        \\  "routes": [{"prefix": "/", "upstream": "svc"}],
+        \\  "upstreams": [{
+        \\    "name": "svc",
+        \\    "endpoints": [{"host": "127.0.0.1", "port": 8000}]
+        \\  }]
+        \\}
+    ;
+    const allocator = std.testing.allocator;
+    const owned = try allocator.dupe(u8, json);
+    const config = try Config.parse(allocator, owned);
+    // If deinit is wrong, testing.allocator will report a leak
+    config.deinit();
 }

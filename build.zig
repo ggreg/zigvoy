@@ -29,15 +29,7 @@ pub fn build(b: *std.Build) void {
     // multiple modules and consumers will need to be able to specify which
     // module they want to access.
     const mod = b.addModule("zigvoy", .{
-        // The root source file is the "entry point" of this module. Users of
-        // this module will only be able to access public declarations contained
-        // in this file, which means that if you have declarations that you
-        // intend to expose to consumers that were defined in other files part
-        // of this module, you will have to make sure to re-export them from
-        // the root file.
         .root_source_file = b.path("src/root.zig"),
-        // Later on we'll use this module as the root module of a test executable
-        // which requires us to specify a target.
         .target = target,
     });
 
@@ -142,15 +134,37 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
-    // Just like flags, top level steps are also listed in the `--help` menu.
-    //
-    // The Zig build system is entirely implemented in userland, which means
-    // that it cannot hook into private compiler APIs. All compilation work
-    // orchestrated by the build system will result in other Zig compiler
-    // subcommands being invoked with the right flags defined. You can observe
-    // these invocations when one fails (or you pass a flag to increase
-    // verbosity) to validate assumptions and diagnose problems.
-    //
-    // Lastly, the Zig build system is relatively simple and self-contained,
-    // and reading its source code will allow you to master it.
+    // ── Per-exercise test steps ─────────────────────────────────────────
+    // Run individual exercises with: zig build test-01, test-02, ... test-07
+    const exercises = .{
+        .{ "test-01", "src/http/request.zig", "Exercise 01: HTTP Request Parser" },
+        .{ "test-02", "src/http/response.zig", "Exercise 02: HTTP Response Builder" },
+        .{ "test-03", "src/config/config.zig", "Exercise 03: JSON Configuration" },
+        .{ "test-04", "src/ratelimit/limiter.zig", "Exercise 04: Token Bucket Rate Limiter" },
+        .{ "test-05", "src/circuit/breaker.zig", "Exercise 05: Circuit Breaker State Machine" },
+        .{ "test-06", "src/metrics/metrics.zig", "Exercise 06: Atomic Metrics Counters" },
+    };
+    inline for (exercises) |ex| {
+        const ex_mod = b.createModule(.{
+            .root_source_file = b.path(ex[1]),
+            .target = target,
+        });
+        const ex_test = b.addTest(.{ .root_module = ex_mod });
+        const run_ex = b.addRunArtifact(ex_test);
+        const step = b.step(ex[0], ex[2]);
+        step.dependOn(&run_ex.step);
+    }
+
+    // Exercise 07: uses a shim rooted at src/ so health/checker.zig
+    // can import ../config/config.zig without escaping the module path.
+    {
+        const ex07_mod = b.createModule(.{
+            .root_source_file = b.path("src/test_07.zig"),
+            .target = target,
+        });
+        const ex07_test = b.addTest(.{ .root_module = ex07_mod });
+        const run_ex07 = b.addRunArtifact(ex07_test);
+        const step07 = b.step("test-07", "Exercise 07: Health Check Worker");
+        step07.dependOn(&run_ex07.step);
+    }
 }
